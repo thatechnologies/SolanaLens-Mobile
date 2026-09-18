@@ -1,0 +1,424 @@
+The UI/UX for this app is already completed. DO NOT redesign, replace, or unnecessarily modify the existing UI.
+
+Now convert the existing prototype into a REAL, FUNCTIONAL Solana Mobile application for the Solana Mobile "CLOCK IN" hackathon.
+
+PRODUCT:
+Solana Wallet AI Copilot — a mobile-first AI assistant that connects to a user's Solana wallet, reads their real on-chain activity, explains transactions in human-readable language, and answers questions about their wallet.
+
+IMPORTANT:
+This is NOT a demo. Do not use fake wallet addresses, fake transactions, mock transaction histories, or hardcoded analytics for the core functionality.
+
+The app must work with real Solana data.
+
+==================================================
+PHASE 1 — AUDIT THE EXISTING PROJECT
+==================================================
+
+Before changing anything:
+
+1. Inspect the existing Expo/React Native project.
+2. Understand the current folder structure.
+3. Identify the existing screens, components, navigation, styling system, state management, and API structure.
+4. Identify which UI currently uses mock/demo data.
+5. Preserve the existing visual design and user experience.
+6. Do not rebuild screens that already exist.
+7. Only modify components when necessary to connect them to real data.
+
+Use the existing UI as the source of truth.
+
+==================================================
+PHASE 2 — SOLANA WALLET CONNECTION
+==================================================
+
+Integrate Solana Mobile Wallet Adapter for Android.
+
+Use the official Solana Mobile Wallet Adapter / Solana Mobile Stack approach.
+
+Target:
+- Android
+- Expo React Native
+- Development build / native Android build
+- NOT Expo Go for the final implementation
+
+Install and configure the required packages, including the appropriate Solana Mobile wallet adapter package and @solana/web3.js.
+
+The user should be able to:
+
+1. Open the app.
+2. Tap "Connect Wallet".
+3. Connect a compatible Solana wallet.
+4. Receive the user's public wallet address.
+5. Store the connected wallet address in application state.
+6. Display the shortened wallet address in the existing UI.
+7. Disconnect the wallet.
+
+NEVER request, store, display, or handle a user's private key or seed phrase.
+
+Use the connected public address to retrieve blockchain data.
+
+==================================================
+PHASE 3 — REAL SOLANA DATA
+==================================================
+
+After wallet connection, fetch REAL mainnet Solana data.
+
+Use @solana/web3.js and a reliable Solana RPC endpoint.
+
+Create a clean service layer such as:
+
+src/services/solana.ts
+
+Implement functions for:
+
+- getWalletBalance()
+- getWalletTransactions()
+- getTransactionDetails()
+- getTokenAccounts()
+- getTokenBalances()
+
+Start with:
+
+connection.getBalance()
+
+connection.getSignaturesForAddress()
+
+connection.getTransaction()
+
+Do not put RPC logic directly inside UI components.
+
+Example architecture:
+
+src/
+  services/
+    solana.ts
+  services/
+    wallet.ts
+  services/
+    ai.ts
+  types/
+    transaction.ts
+  utils/
+    transactionParser.ts
+
+Adapt this structure to the existing project rather than blindly creating duplicates.
+
+==================================================
+PHASE 4 — TRANSACTION NORMALIZATION
+==================================================
+
+Raw Solana RPC responses are too complicated for the UI and AI.
+
+Create a normalized transaction model.
+
+For example:
+
+{
+  signature: string,
+  timestamp: number | null,
+  status: "success" | "failed",
+  type: "transfer" | "swap" | "token_transfer" | "unknown",
+  protocol: string | null,
+  feeSol: number,
+  solChange: number,
+  tokenChanges: [],
+  source: string | null,
+  destination: string | null
+}
+
+Create a transaction parser that converts raw Solana transactions into this normalized format.
+
+Initially support:
+
+1. SOL transfers
+2. SPL token transfers
+3. SOL balance changes
+4. Transaction fees
+5. Basic protocol/program identification
+6. Unknown transactions
+
+Do NOT pretend an unknown transaction is a swap.
+
+If the parser cannot confidently determine what happened, mark it as:
+
+"type": "unknown"
+
+==================================================
+PHASE 5 — REAL WALLET DASHBOARD
+==================================================
+
+Connect the existing dashboard UI to the real wallet data.
+
+Replace mock values with real values.
+
+The dashboard should show:
+
+- SOL balance
+- Token balances where supported
+- Recent transactions
+- Incoming transactions
+- Outgoing transactions
+- Transaction fees
+- Basic spending/receiving totals
+- Transaction timestamps
+- Transaction status
+
+Use loading states.
+
+Use empty states.
+
+Use error states.
+
+Handle wallets with:
+- no transactions
+- no tokens
+- failed transactions
+- large transaction histories
+- RPC failures
+- disconnected wallets
+
+Do not break the existing UI.
+
+==================================================
+PHASE 6 — TRANSACTION DETAILS
+==================================================
+
+When the user taps a transaction in the existing UI:
+
+Fetch/display the real transaction details.
+
+Show useful information such as:
+
+- Transaction type
+- Status
+- Date/time
+- SOL sent
+- SOL received
+- Token sent
+- Token received
+- Network fee
+- Protocol/program if identifiable
+- Sender/receiver when applicable
+- Transaction signature
+
+Add a way to open the transaction on a Solana explorer if the existing UI has such a feature.
+
+Do not expose unnecessary raw RPC JSON to normal users.
+
+==================================================
+PHASE 7 — AI WALLET COPILOT
+==================================================
+
+Now connect the AI feature to REAL wallet data.
+
+The AI must NOT invent transaction information.
+
+The flow should be:
+
+User wallet
+    ↓
+Real Solana transactions
+    ↓
+Transaction normalization
+    ↓
+Structured wallet summary
+    ↓
+AI
+    ↓
+Human-readable explanation
+
+The AI should receive structured information rather than huge raw RPC responses.
+
+Users should be able to ask questions such as:
+
+"Where did my SOL go?"
+
+"How much did I spend this week?"
+
+"What was my biggest transaction?"
+
+"How much did I receive?"
+
+"Explain this transaction."
+
+"What tokens did I receive?"
+
+"What protocols did I interact with?"
+
+"Summarize my wallet activity."
+
+The AI response must be based only on the wallet data supplied to it.
+
+If information cannot be determined from available blockchain data, clearly say that it cannot be determined.
+
+NEVER fabricate a transaction, balance, protocol, amount, or wallet activity.
+
+==================================================
+PHASE 8 — AI SECURITY / API KEY
+==================================================
+
+Do NOT put an OpenAI/API secret directly inside the React Native application.
+
+Use a secure backend/API route for AI requests.
+
+The mobile application sends normalized wallet data/question to the backend.
+
+Backend calls the AI provider.
+
+Backend returns the response.
+
+Use environment variables for secrets.
+
+Example:
+
+OPENAI_API_KEY=...
+
+Never commit secrets to GitHub.
+
+==================================================
+PHASE 9 — PERFORMANCE
+==================================================
+
+Do not fetch hundreds or thousands of transactions every time the dashboard opens.
+
+Initially retrieve a reasonable number such as the latest 20–50 transactions.
+
+Add pagination/load-more support if practical.
+
+Cache wallet data where appropriate.
+
+Avoid unnecessary RPC calls.
+
+Do not call the AI automatically every time the screen renders.
+
+==================================================
+PHASE 10 — ERROR HANDLING
+==================================================
+
+Handle:
+
+- Wallet not installed
+- Wallet connection rejected
+- Wallet disconnected
+- Invalid public key
+- RPC timeout
+- RPC rate limits
+- Empty wallet
+- Failed transaction lookup
+- Unsupported transaction type
+- AI API failure
+- Network unavailable
+
+Show useful user-friendly messages.
+
+Never expose stack traces to normal users.
+
+==================================================
+PHASE 11 — HACKATHON REQUIREMENTS
+==================================================
+
+This application is being built for the Solana Mobile "CLOCK IN" hackathon.
+
+The implementation should be genuinely functional and suitable for an Android APK submission.
+
+Prioritize:
+
+1. Real wallet connection
+2. Real Solana data
+3. Real transaction analysis
+4. Working AI wallet assistant
+5. Mobile-first UX
+6. Solana Mobile integration
+
+Do not waste development time building unnecessary features.
+
+A smaller working product is better than a large fake product.
+
+==================================================
+PHASE 12 — DEVELOPMENT RULES
+==================================================
+
+VERY IMPORTANT:
+
+- Preserve the existing UI.
+- Do not replace the design system.
+- Do not remove existing screens unless required.
+- Do not use fake transaction data in production flows.
+- Do not hardcode a wallet address.
+- Do not hardcode transaction results.
+- Do not expose private keys.
+- Do not put API secrets in the mobile app.
+- Use TypeScript.
+- Keep Solana logic separated from UI.
+- Keep AI logic separated from UI.
+- Add proper loading/error/empty states.
+- Write clean reusable services and utilities.
+- Avoid unnecessary dependencies.
+- Explain any native Android configuration changes.
+- Make sure Android builds successfully.
+
+==================================================
+IMPLEMENTATION ORDER
+==================================================
+
+Do NOT try to implement everything blindly in one step.
+
+Implement in this order:
+
+STEP 1
+Audit the existing project and report what needs to change.
+
+STEP 2
+Install/configure Solana Mobile Wallet Adapter.
+
+STEP 3
+Implement wallet connect/disconnect.
+
+STEP 4
+Test that the real public wallet address is received.
+
+STEP 5
+Implement Solana RPC service.
+
+STEP 6
+Fetch real wallet balance and transactions.
+
+STEP 7
+Normalize/parse transactions.
+
+STEP 8
+Connect real data to the existing dashboard.
+
+STEP 9
+Implement transaction details.
+
+STEP 10
+Implement the AI wallet analysis backend.
+
+STEP 11
+Connect the existing AI UI to the real wallet analysis.
+
+STEP 12
+Test the complete flow on Android.
+
+At each step, verify the implementation before moving to the next step.
+
+==================================================
+SUCCESS CRITERIA
+==================================================
+
+The final test should work like this:
+
+Open app
+→ Connect Solana wallet
+→ Wallet address appears
+→ Real SOL balance appears
+→ Real transactions appear
+→ Tap transaction
+→ Real transaction details appear
+→ Ask AI "Where did my SOL go?"
+→ AI analyzes the user's REAL wallet activity
+→ AI gives a human-readable answer
+
+This must work with a real Solana mainnet wallet.
+
+Start by auditing the existing project. Do not modify the UI yet.
