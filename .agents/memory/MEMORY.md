@@ -1,0 +1,1 @@
+- [NativeWind Expo setup](nativewind-expo.md) — Expo 57 needs explicit NativeWind runtime wiring and class-based dark mode in this pnpm workspace.

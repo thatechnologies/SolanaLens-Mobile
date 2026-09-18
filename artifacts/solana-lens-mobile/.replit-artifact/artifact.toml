@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "SolanaLens Mobile"
+description = "A React Native Expo wallet analytics app for understanding Solana balances, transactions, portfolio performance, and wallet activity with an AI assistant."
+version = "1.0.0"
+id = "artifacts/solana-lens-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 25265
+
+[services.development]
+run = "pnpm --filter @workspace/solana-lens-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/solana-lens-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/solana-lens-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "25265"
+BASE_PATH = "/"
