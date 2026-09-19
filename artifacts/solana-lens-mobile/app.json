@@ -6,11 +6,17 @@
     "orientation": "portrait",
     "icon": "./assets/images/solanalens-icon.png",
     "scheme": "solana-lens-mobile",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false
     },
-    "android": {},
+    "android": {
+      "package": "com.solanalens.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/solanalens-icon.png",
+        "backgroundColor": "#0B0D13"
+      }
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },

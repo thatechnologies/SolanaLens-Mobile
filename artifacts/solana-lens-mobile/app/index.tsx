@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,17 +15,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import { useColors } from '@/hooks/useColors';
+import { askWalletAssistant, explainTransactionLocally } from '@/services/ai';
+import { connectWallet, disconnectWallet } from '@/services/wallet';
+import { getWalletData } from '@/services/solana';
+import type { NormalizedTransaction, WalletData } from '@/types/transaction';
 
 type Screen = 'landing' | 'home' | 'activity' | 'ai' | 'portfolio' | 'settings';
-type TxType = 'Swap' | 'Receive' | 'Transfer' | 'Staking' | 'NFT' | 'DeFi' | 'Fee';
+type TxType = 'Receive' | 'Transfer' | 'Unknown';
 type Filter = 'All' | 'Sent' | 'Received' | 'Swaps' | 'DeFi' | 'Other';
 
 type Token = {
   sym: string;
   name: string;
   qty: number;
-  price: number;
+  price: number | null;
   color: string;
+  mint: string;
 };
 
 type Transaction = {
@@ -37,55 +41,65 @@ type Transaction = {
   amount: string;
   from?: string;
   to?: string;
-  usd: number;
+  usd: number | null;
   direction: 'in' | 'out';
   program?: string;
   counterparty?: string;
   fee: string;
   signature: string;
+  status: 'success' | 'failed';
+  normalized: NormalizedTransaction;
 };
-
-const WALLET_ADDRESS = '7xKqL3nP9dR2vT8mZaB4cE6fH1jK5wQ92A';
-const tokens: Token[] = [
-  { sym: 'SOL', name: 'Solana', qty: 10, price: 124.02, color: '#8B6CFF' },
-  { sym: 'USDC', name: 'USD Coin', qty: 2810.4, price: 1, color: '#3ECF8E' },
-  { sym: 'JUP', name: 'Jupiter', qty: 495.53, price: 0.85, color: '#5B8CFF' },
-  { sym: 'BONK', name: 'Bonk', qty: 19974857.14, price: 0.0000175, color: '#FFB84D' },
-];
-
-const transactions: Transaction[] = [
-  { id: 'tx1', date: 'Sep 15 · 2:32 PM', type: 'Swap', token: 'SOL → JUP', amount: '1.42 SOL → 272.1 JUP', usd: 231.4, direction: 'out', program: 'Jupiter', fee: '0.000005 SOL', signature: '5g7K...pW2q' },
-  { id: 'tx2', date: 'Sep 15 · 9:10 AM', type: 'Receive', token: 'USDC', amount: '120 USDC', usd: 120, direction: 'in', counterparty: '3xRp...4k1N', fee: '—', signature: '2mQ8...vD41' },
-  { id: 'tx3', date: 'Sep 14 · 7:45 PM', type: 'Transfer', token: 'USDC', amount: '50 USDC', usd: 50, direction: 'out', counterparty: '9pQz...7f2K', fee: '0.000005 SOL', signature: '8nL2...xC90' },
-  { id: 'tx4', date: 'Sep 13 · 11:02 AM', type: 'Receive', token: 'SOL', amount: '3.2 SOL', usd: 396.86, direction: 'in', counterparty: 'Coinbase withdrawal', fee: '—', signature: '4vT6...pM33' },
-  { id: 'tx5', date: 'Sep 12 · 4:20 PM', type: 'Swap', token: 'USDC → JUP', amount: '200 USDC → 235.1 JUP', usd: 200, direction: 'out', program: 'Jupiter', fee: '0.000005 SOL', signature: '9wZ1...tR75' },
-  { id: 'tx6', date: 'Sep 11 · 8:15 AM', type: 'Staking', token: 'SOL', amount: '5 SOL', usd: 620.1, direction: 'out', program: 'Marinade Finance', fee: '0.000005 SOL', signature: '1kD4...nB88' },
-  { id: 'tx7', date: 'Sep 10 · 9:03 PM', type: 'NFT', token: 'SOL', amount: '2.1 SOL', usd: 260.44, direction: 'out', program: 'Tensor', counterparty: 'Mad Lads #4821', fee: '0.00001 SOL', signature: '6yH9...zL02' },
-  { id: 'tx8', date: 'Sep 9 · 1:11 PM', type: 'Transfer', token: 'USDC', amount: '75 USDC', usd: 75, direction: 'out', counterparty: '5vWx...2mN7', fee: '0.000005 SOL', signature: '3jS7...qA61' },
-  { id: 'tx9', date: 'Sep 8 · 10:44 AM', type: 'Receive', token: 'BONK', amount: '500,000 BONK', usd: 8.75, direction: 'in', counterparty: 'Airdrop', fee: '—', signature: '7rF3...bE29' },
-  { id: 'tx10', date: 'Sep 7 · 5:30 PM', type: 'Swap', token: 'SOL → USDC', amount: '1.0 SOL → 124.0 USDC', usd: 124.02, direction: 'out', program: 'Jupiter', fee: '0.000005 SOL', signature: '2xN8...wY14' },
-  { id: 'tx11', date: 'Sep 6 · 12:00 PM', type: 'DeFi', token: 'USDC', amount: '300 USDC', usd: 300, direction: 'out', program: 'Kamino Lend', fee: '0.00002 SOL', signature: '8cT5...rP48' },
-  { id: 'tx12', date: 'Sep 5 · 9:25 AM', type: 'Receive', token: 'SOL', amount: '0.8 SOL', usd: 99.22, direction: 'in', counterparty: '7xKz...92Af', fee: '—', signature: '5mV2...kQ76' },
-  { id: 'tx13', date: 'Sep 4 · 3:40 PM', type: 'Transfer', token: 'USDC', amount: '20 USDC', usd: 20, direction: 'out', counterparty: 'Binance deposit', fee: '0.000005 SOL', signature: '9dW6...hU33' },
-  { id: 'tx14', date: 'Sep 3 · 8:12 PM', type: 'Swap', token: 'JUP → SOL', amount: '150 JUP → 1.03 SOL', usd: 127.5, direction: 'out', program: 'Jupiter', fee: '0.000005 SOL', signature: '1pL9...vN20' },
-  { id: 'tx15', date: 'Sep 2 · 8:00 AM', type: 'Receive', token: 'USDC', amount: '60 USDC', usd: 60, direction: 'in', counterparty: 'Payment received', fee: '—', signature: '4kR1...zT85' },
-  { id: 'tx16', date: 'Sep 1 · 10:15 PM', type: 'Transfer', token: 'SOL', amount: '1.5 SOL', usd: 186.03, direction: 'out', counterparty: '4mKp...11zC', fee: '0.000005 SOL', signature: '6qX4...jW57' },
-];
 
 const filters: Filter[] = ['All', 'Sent', 'Received', 'Swaps', 'DeFi', 'Other'];
 const suggestions = ['What did I spend this month?', 'What did I receive this week?', 'What are my largest transactions?', 'What tokens do I hold?', 'How much have I spent on swaps?'];
-const timeframeData: Record<string, number[]> = {
-  '24H': [4790, 4795, 4780, 4802, 4790, 4810, 4821],
-  '7D': [4715, 4740, 4690, 4770, 4760, 4800, 4821],
-  '30D': [4556, 4610, 4580, 4650, 4700, 4680, 4750, 4790, 4770, 4821],
-  '90D': [4210, 4340, 4290, 4480, 4520, 4460, 4610, 4700, 4650, 4750, 4790, 4821],
-  '1Y': [3120, 3350, 3600, 3400, 3800, 4050, 3950, 4200, 4400, 4350, 4600, 4750, 4821],
-};
-
-const totalValue = tokens.reduce((sum, token) => sum + token.qty * token.price, 0);
 const shortAddress = (value: string) => `${value.slice(0, 4)}...${value.slice(-4)}`;
-const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const compactMoney = (value: number) => (value < 0.01 ? `$${value.toFixed(4)}` : money(value));
+const money = (value: number | null) => value == null ? '—' : `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const compactMoney = (value: number | null) => value == null ? '—' : (value < 0.01 ? `$${value.toFixed(4)}` : money(value));
+
+function formatDate(timestamp: number | null) {
+  if (!timestamp) return 'Unknown time';
+  return new Date(timestamp * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function toUiData(wallet: WalletData) {
+  const palette = ['#8B6CFF', '#3ECF8E', '#5B8CFF', '#FFB84D', '#F472B6'];
+  const tokens: Token[] = wallet.tokens.map((token, index) => ({
+    sym: token.symbol,
+    name: token.name,
+    qty: token.amount,
+    price: token.priceUsd,
+    color: palette[index % palette.length],
+    mint: token.mint,
+  }));
+  const transactions: Transaction[] = wallet.transactions.map((tx) => {
+    const tokenChange = tx.tokenChanges[0];
+    const direction = tx.solChange > 0 || tokenChange?.direction === 'in' ? 'in' : 'out';
+    const type: TxType = tx.type === 'unknown' ? 'Unknown' : direction === 'in' ? 'Receive' : 'Transfer';
+    const amount = tokenChange
+      ? `${tokenChange.direction === 'in' ? '+' : '−'}${tokenChange.amount} ${tokenChange.mint.slice(0, 6)}…`
+      : `${tx.solChange >= 0 ? '+' : '−'}${Math.abs(tx.solChange).toFixed(6)} SOL`;
+    const tokenPrice = tokenChange ? wallet.tokens.find((token) => token.mint === tokenChange.mint)?.priceUsd ?? null : null;
+    const usd = tokenChange && tokenPrice != null ? tokenChange.amount * tokenPrice : null;
+    return {
+      id: tx.signature,
+      date: formatDate(tx.timestamp),
+      type,
+      token: tokenChange?.mint ?? 'SOL',
+      amount,
+      usd,
+      direction,
+      program: tx.protocol ?? undefined,
+      counterparty: tx.destination ?? tx.source ?? undefined,
+      fee: tx.feeSol ? `${tx.feeSol.toFixed(6)} SOL` : '—',
+      signature: tx.signature,
+      status: tx.status,
+      normalized: tx,
+    };
+  });
+  const pricedValue = tokens.reduce((sum, token) => sum + (token.price == null ? 0 : token.qty * token.price), 0);
+  return { address: wallet.address, balanceSol: wallet.balanceSol, tokens, transactions, totalValue: pricedValue || null };
+}
 
 function Icon({ name, size = 20, color = '#8B91A4' }: { name: keyof typeof Feather.glyphMap; size?: number; color?: string }) {
   return <Feather name={name} size={size} color={color} />;
@@ -122,11 +136,7 @@ function TransactionIcon({ type, colors }: { type: TxType; colors: ReturnType<ty
   const settings: Record<TxType, { icon: keyof typeof Feather.glyphMap; bg: string; fg: string }> = {
     Receive: { icon: 'arrow-down-left', bg: colors.positiveSoft, fg: colors.positive },
     Transfer: { icon: 'arrow-up-right', bg: colors.surface3, fg: colors.mutedForeground },
-    Swap: { icon: 'repeat', bg: '#282340', fg: colors.tint },
-    NFT: { icon: 'box', bg: '#3B2F1D', fg: '#FFB84D' },
-    DeFi: { icon: 'shield', bg: '#202F48', fg: colors.accent },
-    Staking: { icon: 'clock', bg: colors.positiveSoft, fg: colors.positive },
-    Fee: { icon: 'minus-circle', bg: colors.surface3, fg: colors.faint },
+    Unknown: { icon: 'help-circle', bg: colors.surface3, fg: colors.faint },
   };
   const value = settings[type];
   return <View style={[styles.txIcon, { backgroundColor: value.bg }]}><Icon name={value.icon} size={18} color={value.fg} /></View>;
@@ -142,7 +152,7 @@ function TransactionRow({ tx, colors, onPress }: { tx: Transaction; colors: Retu
   );
 }
 
-function Landing({ onDemo, onConnect }: { onDemo: () => void; onConnect: () => void }) {
+function Landing({ onConnect, error, loading }: { onConnect: () => void; error: string | null; loading: boolean }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 34, paddingBottom: insets.bottom + 20 }]}>
@@ -159,8 +169,8 @@ function Landing({ onDemo, onConnect }: { onDemo: () => void; onConnect: () => v
         </View>
       </View>
       <View style={styles.landingActions}>
-        <PrimaryButton label="Connect Solana Wallet" onPress={onConnect} icon="link" />
-        <PrimaryButton label="Explore Demo" onPress={onDemo} secondary />
+        <PrimaryButton label={loading ? "Connecting…" : "Connect Solana Wallet"} onPress={onConnect} icon="link" />
+        {error && <Text style={styles.errorText}>{error}</Text>}
         <View style={styles.securityNote}><Icon name="shield" size={15} color="#565C70" /><Text style={styles.securityText}>Read-only analytics. We never ask for or store your private keys.</Text></View>
       </View>
     </View>
@@ -172,49 +182,49 @@ function Header({ eyebrow, title, right, colors }: { eyebrow: string; title: str
   return <View style={[styles.header, { paddingTop: insets.top + 14 }]}><View><Text style={styles.eyebrow}>{eyebrow}</Text><Text style={styles.headerTitle}>{title}</Text></View>{right}</View>;
 }
 
-function WalletChip({ onPress, colors }: { onPress: () => void; colors: ReturnType<typeof useColors> }) {
-  return <Pressable onPress={onPress} style={styles.walletChip}><View style={styles.walletDot} /><Text style={styles.walletChipText}>{shortAddress(WALLET_ADDRESS)}</Text><Icon name="chevron-right" size={14} color={colors.mutedForeground} /></Pressable>;
+function WalletChip({ onPress, colors, address }: { onPress: () => void; colors: ReturnType<typeof useColors>; address: string }) {
+  return <Pressable onPress={onPress} style={styles.walletChip}><View style={styles.walletDot} /><Text style={styles.walletChipText}>{shortAddress(address)}</Text><Icon name="chevron-right" size={14} color={colors.mutedForeground} /></Pressable>;
 }
 
-function Home({ colors, onNavigate, onDetail, onSettings }: { colors: ReturnType<typeof useColors>; onNavigate: (screen: Screen) => void; onDetail: (tx: Transaction) => void; onSettings: () => void }) {
+function Home({ colors, data, loading, error, onRetry, onNavigate, onDetail, onSettings }: { colors: ReturnType<typeof useColors>; data: ReturnType<typeof toUiData>; loading: boolean; error: string | null; onRetry: () => void; onNavigate: (screen: Screen) => void; onDetail: (tx: Transaction) => void; onSettings: () => void }) {
+  const { tokens, transactions, totalValue, balanceSol } = data;
   return (
     <View style={styles.screen}>
-      <Header eyebrow="Welcome back" title="Dashboard" colors={colors} right={<WalletChip onPress={onSettings} colors={colors} />} />
+      <Header eyebrow="Welcome back" title="Dashboard" colors={colors} right={<WalletChip onPress={onSettings} colors={colors} address={data.address} />} />
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {error && <View style={styles.demoBanner}><Icon name="alert-triangle" size={15} color={colors.negative} /><Text style={styles.demoText}>{error}</Text><Pressable onPress={onRetry}><Text style={styles.linkText}>Retry</Text></Pressable></View>}
         <View style={styles.portfolioHero}>
           <View style={styles.heroGlow} /><Text style={styles.label}>Total portfolio value</Text><Text style={styles.heroValue}>{money(totalValue)}</Text>
-          <View style={styles.changePill}><Icon name="trending-up" size={13} color={colors.positive} /><Text style={styles.changeText}>5.82% this month</Text></View>
-          <View style={styles.metaRow}><View><Text style={styles.metaLabel}>SOL balance</Text><Text style={styles.metaValue}>10.00 SOL</Text></View><View><Text style={styles.metaLabel}>Transactions</Text><Text style={styles.metaValue}>{transactions.length}</Text></View><View><Text style={styles.metaLabel}>7d change</Text><Text style={[styles.metaValue, { color: colors.positive }]}>+2.14%</Text></View></View>
+          <View style={styles.metaRow}><View><Text style={styles.metaLabel}>SOL balance</Text><Text style={styles.metaValue}>{balanceSol.toFixed(6)} SOL</Text></View><View><Text style={styles.metaLabel}>Transactions</Text><Text style={styles.metaValue}>{loading ? '…' : transactions.length}</Text></View><View><Text style={styles.metaLabel}>Pricing</Text><Text style={[styles.metaValue, { color: colors.mutedForeground }]}>{totalValue == null ? 'Unavailable' : 'Live'}</Text></View></View>
         </View>
-        <View style={styles.section}><SectionTitle title="Token holdings" action="View all" onAction={() => onNavigate('portfolio')} /><View style={styles.card}>{tokens.map((token) => <View key={token.sym} style={styles.holdingRow}><TokenIcon token={token} /><View style={styles.rowInfo}><Text style={styles.rowTitle}>{token.sym}</Text><Text style={styles.rowSub}>{token.qty.toLocaleString('en-US', { maximumFractionDigits: token.sym === 'BONK' ? 0 : 2 })} {token.sym}</Text></View><View style={styles.amountBlock}><Text style={styles.rowAmount}>{money(token.qty * token.price)}</Text><Text style={styles.rowDate}>{((token.qty * token.price) / totalValue * 100).toFixed(1)}%</Text></View></View>)}</View></View>
-        <View style={styles.section}><SectionTitle title="Recent activity" action="View all" onAction={() => onNavigate('activity')} /><View style={styles.card}>{transactions.slice(0, 4).map((tx) => <TransactionRow key={tx.id} tx={tx} colors={colors} onPress={() => onDetail(tx)} />)}</View></View>
+        <View style={styles.section}><SectionTitle title="Token holdings" action="View all" onAction={() => onNavigate('portfolio')} /><View style={styles.card}>{tokens.length ? tokens.map((token) => { const value = token.price == null ? null : token.qty * token.price; return <View key={token.mint} style={styles.holdingRow}><TokenIcon token={token} /><View style={styles.rowInfo}><Text style={styles.rowTitle}>{token.sym}</Text><Text style={styles.rowSub}>{token.qty.toLocaleString('en-US', { maximumFractionDigits: token.sym === 'SOL' ? 6 : 4 })} {token.sym}</Text></View><View style={styles.amountBlock}><Text style={styles.rowAmount}>{money(value)}</Text><Text style={styles.rowDate}>{totalValue && value != null ? `${(value / totalValue * 100).toFixed(1)}%` : '—'}</Text></View></View>; }) : <View style={styles.emptyState}><Icon name="layers" size={30} color={colors.faint} /><Text style={styles.emptyTitle}>{loading ? 'Loading balances…' : 'No token balances'}</Text><Text style={styles.emptyText}>Token accounts with a non-zero balance will appear here.</Text></View>}</View></View>
+        <View style={styles.section}><SectionTitle title="Recent activity" action="View all" onAction={() => onNavigate('activity')} /><View style={styles.card}>{transactions.length ? transactions.slice(0, 4).map((tx) => <TransactionRow key={tx.id} tx={tx} colors={colors} onPress={() => onDetail(tx)} />) : <View style={styles.emptyState}><Icon name="activity" size={30} color={colors.faint} /><Text style={styles.emptyTitle}>{loading ? 'Loading activity…' : 'No transactions found'}</Text><Text style={styles.emptyText}>Recent confirmed transactions will appear here.</Text></View>}</View></View>
         <View style={styles.section}><PrimaryButton label="Ask the AI about this wallet" onPress={() => onNavigate('ai')} secondary icon="star" /></View>
       </ScrollView>
     </View>
   );
 }
 
-function Activity({ colors, onDetail }: { colors: ReturnType<typeof useColors>; onDetail: (tx: Transaction) => void }) {
+function Activity({ colors, transactions, onDetail }: { colors: ReturnType<typeof useColors>; transactions: Transaction[]; onDetail: (tx: Transaction) => void }) {
   const [filter, setFilter] = useState<Filter>('All');
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => transactions.filter((tx) => {
-    const matches = filter === 'All' || (filter === 'Sent' && tx.direction === 'out' && ['Transfer', 'NFT'].includes(tx.type)) || (filter === 'Received' && tx.direction === 'in') || (filter === 'Swaps' && tx.type === 'Swap') || (filter === 'DeFi' && ['DeFi', 'Staking'].includes(tx.type)) || (filter === 'Other' && ['Fee', 'NFT'].includes(tx.type) && tx.direction === 'out');
+    const matches = filter === 'All' || (filter === 'Sent' && tx.direction === 'out') || (filter === 'Received' && tx.direction === 'in') || (filter === 'Swaps' && tx.normalized.type === 'swap') || (filter === 'DeFi' && Boolean(tx.program)) || (filter === 'Other' && tx.type === 'Unknown');
     const query = search.toLowerCase();
     return matches && (!query || `${tx.token} ${tx.type} ${tx.program ?? ''} ${tx.counterparty ?? ''} ${tx.signature}`.toLowerCase().includes(query));
   }), [filter, search]);
   return <View style={styles.screen}><Header eyebrow="Transaction history" title="Activity" colors={colors} /><View style={styles.searchBox}><Icon name="search" size={17} color={colors.faint} /><TextInput value={search} onChangeText={setSearch} placeholder="Search token, program or address" placeholderTextColor={colors.faint} style={styles.searchInput} /></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>{filters.map((item) => <Pressable key={item} onPress={() => { setFilter(item); Haptics.selectionAsync(); }} style={[styles.chip, filter === item && styles.chipActive]}><Text style={[styles.chipText, filter === item && styles.chipTextActive]}>{item}</Text></Pressable>)}</ScrollView><ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}><View style={styles.card}>{filtered.length ? filtered.map((tx) => <TransactionRow key={tx.id} tx={tx} colors={colors} onPress={() => onDetail(tx)} />) : <View style={styles.emptyState}><Icon name="search" size={34} color={colors.faint} /><Text style={styles.emptyTitle}>No transactions match</Text><Text style={styles.emptyText}>Try a different search or filter.</Text></View>}</View></ScrollView></View>;
 }
 
-function Portfolio({ colors }: { colors: ReturnType<typeof useColors> }) {
+function Portfolio({ colors, tokens, totalValue }: { colors: ReturnType<typeof useColors>; tokens: Token[]; totalValue: number | null }) {
   const [timeframe, setTimeframe] = useState('30D');
-  const data = timeframeData[timeframe];
-  const first = data[0];
-  const last = data[data.length - 1];
-  const change = ((last - first) / first) * 100;
-  const sol = tokens[0].qty * tokens[0].price;
-  const stable = tokens[1].qty * tokens[1].price;
-  const other = totalValue - sol - stable;
-  return <View style={styles.screen}><Header eyebrow="Analytics" title="Portfolio" colors={colors} /><ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}><View style={styles.timeframeRow}>{Object.keys(timeframeData).map((item) => <Pressable key={item} onPress={() => { setTimeframe(item); Haptics.selectionAsync(); }} style={[styles.timeframe, timeframe === item && styles.chipActive]}><Text style={[styles.chipText, timeframe === item && styles.chipTextActive]}>{item}</Text></Pressable>)}</View><View style={styles.chartCard}><Text style={styles.chartValue}>{money(totalValue)}</Text><View style={styles.changePill}><Icon name={change >= 0 ? 'trending-up' : 'trending-down'} size={13} color={change >= 0 ? colors.positive : colors.negative} /><Text style={[styles.changeText, change < 0 && { color: colors.negative }]}>{Math.abs(change).toFixed(2)}%</Text></View><LineChart data={data} positive={change >= 0} colors={colors} /></View><View style={styles.section}><SectionTitle title="Allocation" /><View style={styles.card}><View style={styles.allocation}><DonutChart values={tokens.map((token) => token.qty * token.price)} colors={tokens.map((token) => token.color)} /><View style={styles.legend}>{tokens.map((token) => <View key={token.sym} style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: token.color }]} /><Text style={styles.legendText}>{token.sym}</Text><Text style={styles.legendPct}>{((token.qty * token.price) / totalValue * 100).toFixed(1)}%</Text></View>)}</View></View></View></View><View style={styles.section}><SectionTitle title="Breakdown" /><View style={styles.card}>{[['SOL', sol], ['Stablecoins (USDC)', stable], ['Other tokens', other]].map(([label, value]) => <View key={label as string} style={styles.breakdownRow}><Text style={styles.breakdownLabel}>{label as string}</Text><Text style={styles.breakdownValue}>{((value as number) / totalValue * 100).toFixed(1)}%</Text></View>)}</View></View></ScrollView></View>;
+  const pricedTokens = tokens.filter((token) => token.price != null);
+  const values = pricedTokens.map((token) => token.qty * (token.price ?? 0));
+  const sol = tokens.find((token) => token.sym === 'SOL');
+  const solValue = sol?.price == null ? null : sol.qty * sol.price;
+  const stableValue = tokens.filter((token) => token.sym === 'USDC' || token.name.toLowerCase().includes('usd')).reduce((sum, token) => sum + token.qty * (token.price ?? 0), 0);
+  const otherValue = totalValue == null ? null : Math.max(totalValue - (solValue ?? 0) - stableValue, 0);
+  return <View style={styles.screen}><Header eyebrow="Analytics" title="Portfolio" colors={colors} /><ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}><View style={styles.timeframeRow}>{['24H', '7D', '30D', '90D', '1Y'].map((item) => <Pressable key={item} onPress={() => { setTimeframe(item); Haptics.selectionAsync(); }} style={[styles.timeframe, timeframe === item && styles.chipActive]}><Text style={[styles.chipText, timeframe === item && styles.chipTextActive]}>{item}</Text></Pressable>)}</View><View style={styles.chartCard}><Text style={styles.chartValue}>{money(totalValue)}</Text><Text style={styles.chartNote}>Historical portfolio pricing is provided when live token prices are available.</Text><View style={styles.chartEmpty}><Icon name="bar-chart-2" size={28} color={colors.faint} /><Text style={styles.emptyText}>{pricedTokens.length ? `Live allocation is available for ${pricedTokens.length} asset${pricedTokens.length === 1 ? '' : 's'}; historical ${timeframe} snapshots are not available from wallet RPC.` : 'Live token pricing is not available for this wallet yet.'}</Text></View></View><View style={styles.section}><SectionTitle title="Allocation" /><View style={styles.card}>{pricedTokens.length ? <View style={styles.allocation}><DonutChart values={values} colors={pricedTokens.map((token) => token.color)} total={totalValue ?? 1} /><View style={styles.legend}>{pricedTokens.map((token) => { const value = token.qty * (token.price ?? 0); return <View key={token.mint} style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: token.color }]} /><Text style={styles.legendText}>{token.sym}</Text><Text style={styles.legendPct}>{totalValue ? `${(value / totalValue * 100).toFixed(1)}%` : '—'}</Text></View>; })}</View></View> : <View style={styles.emptyState}><Text style={styles.emptyTitle}>No priced assets</Text><Text style={styles.emptyText}>Allocation percentages will appear when a supported price feed returns data.</Text></View>}</View></View><View style={styles.section}><SectionTitle title="Breakdown" /><View style={styles.card}>{[['SOL', solValue], ['Stablecoins', stableValue], ['Other tokens', otherValue]].map(([label, value]) => <View key={label as string} style={styles.breakdownRow}><Text style={styles.breakdownLabel}>{label as string}</Text><Text style={styles.breakdownValue}>{totalValue && value != null ? `${((value as number) / totalValue * 100).toFixed(1)}%` : '—'}</Text></View>)}</View></View></ScrollView></View>;
 }
 
 function LineChart({ data, positive, colors }: { data: number[]; positive: boolean; colors: ReturnType<typeof useColors> }) {
@@ -227,33 +237,24 @@ function LineChart({ data, positive, colors }: { data: number[]; positive: boole
   return <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"><Defs><SvgGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor={positive ? colors.positive : colors.negative} stopOpacity="0.32" /><Stop offset="1" stopColor={positive ? colors.positive : colors.negative} stopOpacity="0" /></SvgGradient></Defs><Path d={`${path} L${width - 6},${height} L6,${height} Z`} fill="url(#chartFill)" /><Path d={path} fill="none" stroke={positive ? colors.positive : colors.negative} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /><Circle cx={points[points.length - 1][0]} cy={points[points.length - 1][1]} r="4" fill={positive ? colors.positive : colors.negative} /></Svg>;
 }
 
-function DonutChart({ values, colors }: { values: number[]; colors: string[] }) {
+function DonutChart({ values, colors, total }: { values: number[]; colors: string[]; total: number }) {
   const radius = 44;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
-  return <Svg width={112} height={112} viewBox="0 0 112 112"><Circle cx="56" cy="56" r={radius} fill="none" stroke="#20242F" strokeWidth="14" />{values.map((value, index) => { const length = (value / totalValue) * circumference; const circle = <Circle key={colors[index]} cx="56" cy="56" r={radius} fill="none" stroke={colors[index]} strokeWidth="14" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 56 56)" />; offset += length; return circle; })}</Svg>;
+  return <Svg width={112} height={112} viewBox="0 0 112 112"><Circle cx="56" cy="56" r={radius} fill="none" stroke="#20242F" strokeWidth="14" />{values.map((value, index) => { const length = (value / total) * circumference; const circle = <Circle key={colors[index]} cx="56" cy="56" r={radius} fill="none" stroke={colors[index]} strokeWidth="14" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 56 56)" />; offset += length; return circle; })}</Svg>;
 }
 
-function Assistant({ colors }: { colors: ReturnType<typeof useColors> }) {
+function Assistant({ colors, wallet }: { colors: ReturnType<typeof useColors>; wallet: WalletData | null }) {
   const [messages, setMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
-  const answer = (query: string) => {
-    const lower = query.toLowerCase();
-    if (lower.includes('spend') || lower.includes('spent')) { const total = transactions.filter((tx) => tx.direction === 'out').reduce((sum, tx) => sum + tx.usd, 0); return `From your retrieved wallet data, you sent approximately ${money(total)} across ${transactions.filter((tx) => tx.direction === 'out').length} transactions this month. Your largest outgoing transaction was ${compactMoney(Math.max(...transactions.filter((tx) => tx.direction === 'out').map((tx) => tx.usd)))}.`; }
-    if (lower.includes('receiv')) { const total = transactions.filter((tx) => tx.direction === 'in').reduce((sum, tx) => sum + tx.usd, 0); return `This wallet received approximately ${money(total)} across ${transactions.filter((tx) => tx.direction === 'in').length} transactions in the last 30 days.`; }
-    if (lower.includes('largest') || lower.includes('biggest')) return `Your three largest recorded transactions are ${transactions.slice().sort((a, b) => b.usd - a.usd).slice(0, 3).map((tx) => `${tx.type} — ${compactMoney(tx.usd)}`).join(', ')}.`;
-    if (lower.includes('token') && (lower.includes('hold') || lower.includes('have'))) return `You currently hold ${tokens.length} tokens worth ${money(totalValue)}: ${tokens.map((token) => `${token.sym} (${money(token.qty * token.price)})`).join(', ')}.`;
-    if (lower.includes('swap')) return `You routed approximately ${money(transactions.filter((tx) => tx.type === 'Swap').reduce((sum, tx) => sum + tx.usd, 0))} through ${transactions.filter((tx) => tx.type === 'Swap').length} swaps, all via Jupiter.`;
-    return 'I can answer questions about spending, receiving, largest transactions, token holdings, and swap activity using only this wallet’s retrieved data.';
-  };
-  const send = (text = input) => { const trimmed = text.trim(); if (!trimmed || typing) return; setMessages((current) => [...current, { role: 'user', text: trimmed }]); setInput(''); setTyping(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setTimeout(() => { setMessages((current) => [...current, { role: 'ai', text: answer(trimmed) }]); setTyping(false); }, 550); };
+  const send = async (text = input) => { const trimmed = text.trim(); if (!trimmed || typing) return; setMessages((current) => [...current, { role: 'user', text: trimmed }]); setInput(''); setTyping(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); try { if (!wallet) throw new Error('Connect a wallet before asking questions about its activity.'); const response = await askWalletAssistant(trimmed, wallet); setMessages((current) => [...current, { role: 'ai', text: response }]); } catch (error) { setMessages((current) => [...current, { role: 'ai', text: error instanceof Error ? error.message : 'The wallet assistant is unavailable.' }]); } finally { setTyping(false); } };
   return <View style={styles.screen}><Header eyebrow="Wallet intelligence" title="Assistant" colors={colors} /><ScrollView contentContainerStyle={styles.chatContent} showsVerticalScrollIndicator={false}>{messages.length === 0 && <View style={styles.chatIntro}><View style={styles.aiBadge}><Icon name="star" size={18} color="#FFFFFF" /></View><Text style={styles.chatIntroTitle}>Ask about your wallet</Text><Text style={styles.chatIntroText}>Answers are generated from your retrieved wallet data — never invented.</Text></View>}{messages.map((message, index) => <View key={`${message.role}-${index}`} style={[styles.message, message.role === 'user' ? styles.userMessage : styles.aiMessage]}><Text style={[styles.messageText, message.role === 'user' && styles.userMessageText]}>{message.text}</Text></View>)}{typing && <View style={[styles.message, styles.aiMessage]}><Text style={styles.typingText}>Thinking…</Text></View>}{messages.length === 0 && <View style={styles.suggestions}>{suggestions.map((suggestion) => <Pressable key={suggestion} onPress={() => send(suggestion)} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestion}</Text><Icon name="arrow-up-right" size={15} color={colors.faint} /></Pressable>)}</View>}</ScrollView><View style={[styles.chatBar, { paddingBottom: useSafeAreaInsets().bottom + 10 }]}><View style={styles.chatInputRow}><TextInput value={input} onChangeText={setInput} onSubmitEditing={() => send()} placeholder="Ask anything about your wallet..." placeholderTextColor={colors.faint} style={styles.chatInput} returnKeyType="send" /><Pressable onPress={() => send()} style={styles.sendButton}><Icon name="arrow-up" size={17} color="#FFFFFF" /></Pressable></View></View></View>;
 }
 
-function Settings({ colors, onDisconnect }: { colors: ReturnType<typeof useColors>; onDisconnect: () => void }) {
+function Settings({ colors, address, onDisconnect }: { colors: ReturnType<typeof useColors>; address: string; onDisconnect: () => void }) {
   const Row = ({ icon, label, value, onPress, destructive = false }: { icon: keyof typeof Feather.glyphMap; label: string; value?: string; onPress?: () => void; destructive?: boolean }) => <Pressable onPress={onPress} style={({ pressed }) => [styles.settingsRow, pressed && styles.rowPressed]}><View style={styles.settingIcon}><Icon name={icon} size={17} color={destructive ? colors.negative : colors.mutedForeground} /></View><Text style={[styles.settingLabel, destructive && { color: colors.negative }]}>{label}</Text>{value && <Text style={styles.settingValue}>{value}</Text>}{onPress && !destructive && <Icon name="chevron-right" size={16} color={colors.faint} />}</Pressable>;
-  return <View style={styles.screen}><Header eyebrow="Account" title="Settings" colors={colors} /><ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}><View style={styles.demoBanner}><Icon name="alert-triangle" size={15} color={colors.tint} /><Text style={styles.demoText}>Demo Wallet — simulated data. Connect a real wallet to see your own activity.</Text></View><View style={styles.section}><SectionTitle title="Wallet" /><View style={styles.card}><View style={styles.addressRow}><View style={styles.walletDotLarge} /><View style={styles.rowInfo}><Text style={styles.rowTitle}>Public address</Text><Text style={styles.rowSub}>{shortAddress(WALLET_ADDRESS)}</Text></View><Pressable onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }} style={styles.copyButton}><Text style={styles.copyText}>Copy</Text></Pressable></View><Row icon="external-link" label="View on Solana Explorer" onPress={() => Linking.openURL('https://explorer.solana.com')} /><Row icon="log-out" label="Disconnect wallet" onPress={onDisconnect} destructive /></View></View><View style={styles.section}><SectionTitle title="Preferences" /><View style={styles.card}><Row icon="moon" label="Appearance" value="Dark" /><Row icon="dollar-sign" label="Currency" value="USD" /><Row icon="bell-off" label="Notifications" value="Off" /></View></View><View style={styles.section}><SectionTitle title="About" /><View style={styles.card}><Row icon="info" label="SolanaLens" value="v0.1 prototype" /></View></View></ScrollView></View>;
+  return <View style={styles.screen}><Header eyebrow="Account" title="Settings" colors={colors} /><ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}><View style={styles.section}><SectionTitle title="Wallet" /><View style={styles.card}><View style={styles.addressRow}><View style={styles.walletDotLarge} /><View style={styles.rowInfo}><Text style={styles.rowTitle}>Public address</Text><Text style={styles.rowSub}>{shortAddress(address)}</Text></View><Pressable onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }} style={styles.copyButton}><Text style={styles.copyText}>Copy</Text></Pressable></View><Row icon="external-link" label="View on Solana Explorer" onPress={() => Linking.openURL(`https://explorer.solana.com/address/${address}?cluster=mainnet-beta`)} /><Row icon="log-out" label="Disconnect wallet" onPress={onDisconnect} destructive /></View></View><View style={styles.section}><SectionTitle title="Preferences" /><View style={styles.card}><Row icon="moon" label="Appearance" value="Dark" /><Row icon="dollar-sign" label="Currency" value="USD" /><Row icon="bell-off" label="Notifications" value="Off" /></View></View><View style={styles.section}><SectionTitle title="About" /><View style={styles.card}><Row icon="info" label="SolanaLens" value="Mainnet read-only" /></View></View></ScrollView></View>;
 }
 
 function AppNav({ active, onNavigate, colors }: { active: Screen; onNavigate: (screen: Screen) => void; colors: ReturnType<typeof useColors> }) {
@@ -267,23 +268,54 @@ export default function Index() {
   const [screen, setScreen] = useState<Screen>('landing');
   const [connectVisible, setConnectVisible] = useState(false);
   const [detail, setDetail] = useState<Transaction | null>(null);
+  const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
-  useEffect(() => { AsyncStorage.getItem('solanalens-intro-seen').then((value) => { if (value === 'true') setScreen('home'); }); }, []);
-  const enterApp = () => { AsyncStorage.setItem('solanalens-intro-seen', 'true'); setScreen('home'); };
-  const disconnect = () => { AsyncStorage.removeItem('solanalens-intro-seen'); setScreen('landing'); };
-  if (screen === 'landing') return <><Landing onDemo={enterApp} onConnect={() => setConnectVisible(true)} /><ConnectSheet visible={connectVisible} onClose={() => setConnectVisible(false)} onConnect={(name) => { setConnectVisible(false); enterApp(); }} colors={colors} /></>;
-  return <View className="flex-1 bg-ink" style={styles.app}><View className="flex-1" style={styles.main}>{screen === 'home' && <Home colors={colors} onNavigate={setScreen} onDetail={setDetail} onSettings={() => setScreen('settings')} />}{screen === 'activity' && <Activity colors={colors} onDetail={setDetail} />}{screen === 'portfolio' && <Portfolio colors={colors} />}{screen === 'ai' && <Assistant colors={colors} />}{screen === 'settings' && <Settings colors={colors} onDisconnect={disconnect} />}</View><AppNav active={screen} onNavigate={setScreen} colors={colors} /><TransactionDetail tx={detail} onClose={() => setDetail(null)} colors={colors} insetTop={insets.top} /></View>;
+  const viewData = wallet ? toUiData(wallet) : { address: '', balanceSol: 0, tokens: [], transactions: [], totalValue: null };
+  const refresh = async (address: string) => {
+    setLoading(true);
+    setConnectionError(null);
+    try {
+      setWallet(await getWalletData(address));
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Unable to load this wallet.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  const beginConnection = async () => {
+    setConnectVisible(false);
+    setLoading(true);
+    setConnectionError(null);
+    try {
+      const session = await connectWallet();
+      setScreen('home');
+      await refresh(session.address);
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Wallet connection was not completed.');
+      setLoading(false);
+    }
+  };
+  const disconnect = async () => {
+    await disconnectWallet();
+    setWallet(null);
+    setConnectionError(null);
+    setScreen('landing');
+  };
+  if (screen === 'landing') return <><Landing loading={loading} error={connectionError} onConnect={() => setConnectVisible(true)} /><ConnectSheet visible={connectVisible} onClose={() => setConnectVisible(false)} onConnect={beginConnection} colors={colors} /></>;
+  return <View className="flex-1 bg-ink" style={styles.app}><View className="flex-1" style={styles.main}>{screen === 'home' && <Home colors={colors} data={viewData} loading={loading} error={connectionError} onRetry={() => viewData.address && refresh(viewData.address)} onNavigate={setScreen} onDetail={setDetail} onSettings={() => setScreen('settings')} />}{screen === 'activity' && <Activity colors={colors} transactions={viewData.transactions} onDetail={setDetail} />}{screen === 'portfolio' && <Portfolio colors={colors} tokens={viewData.tokens} totalValue={viewData.totalValue} />}{screen === 'ai' && <Assistant colors={colors} wallet={wallet} />}{screen === 'settings' && <Settings colors={colors} address={viewData.address} onDisconnect={disconnect} />}</View><AppNav active={screen} onNavigate={setScreen} colors={colors} /><TransactionDetail tx={detail} onClose={() => setDetail(null)} colors={colors} insetTop={insets.top} /></View>;
 }
 
-function ConnectSheet({ visible, onClose, onConnect, colors }: { visible: boolean; onClose: () => void; onConnect: (name: string) => void; colors: ReturnType<typeof useColors> }) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={[styles.sheet, { paddingBottom: 28 }]}><View style={styles.sheetHandle} /><Text style={styles.sheetTitle}>Connect a wallet</Text><Text style={styles.sheetHint}>SolanaLens only requests your public address. It’s read-only — we can never move your funds.</Text>{[['Phantom', 'Popular Solana wallet', 'ghost'], ['Solflare', 'Browser & mobile wallet', 'flame'], ['Backpack', 'Wallet & xNFT platform', 'briefcase']].map(([name, description, icon]) => <Pressable key={name} onPress={() => onConnect(name)} style={styles.walletOption}><View style={styles.walletOptionIcon}><Icon name={icon as keyof typeof Feather.glyphMap} size={18} color={colors.tint} /></View><View style={styles.rowInfo}><Text style={styles.walletName}>{name}</Text><Text style={styles.rowSub}>{description}</Text></View><Icon name="chevron-right" size={17} color={colors.faint} /></Pressable>)}<View style={styles.divider}><View style={styles.dividerLine} /><Text style={styles.dividerText}>or</Text><View style={styles.dividerLine} /></View><PrimaryButton label="Continue with Demo Wallet" onPress={() => onConnect('Demo')} secondary /></View></View></Modal>;
+function ConnectSheet({ visible, onClose, onConnect, colors }: { visible: boolean; onClose: () => void; onConnect: () => void; colors: ReturnType<typeof useColors> }) {
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={[styles.sheet, { paddingBottom: 28 }]}><View style={styles.sheetHandle} /><Text style={styles.sheetTitle}>Connect a wallet</Text><Text style={styles.sheetHint}>SolanaLens requests only your public address. The Android wallet adapter opens a compatible wallet for approval.</Text><Pressable onPress={onConnect} style={styles.walletOption}><View style={styles.walletOptionIcon}><Icon name="smartphone" size={18} color={colors.tint} /></View><View style={styles.rowInfo}><Text style={styles.walletName}>Open compatible wallet</Text><Text style={styles.rowSub}>Phantom, Solflare, Backpack, and other MWA wallets</Text></View><Icon name="chevron-right" size={17} color={colors.faint} /></Pressable></View></View></Modal>;
 }
 
 function TransactionDetail({ tx, onClose, colors, insetTop }: { tx: Transaction | null; onClose: () => void; colors: ReturnType<typeof useColors>; insetTop: number }) {
   const [explaining, setExplaining] = useState(false);
   if (!tx) return null;
-  const explanation = tx.type === 'Swap' ? `You swapped ${tx.amount} through ${tx.program}. The transaction confirmed successfully and incurred a network fee of ${tx.fee}.` : tx.direction === 'in' ? `This wallet received ${tx.amount} from ${tx.counterparty ?? 'an external wallet'}, worth approximately ${compactMoney(tx.usd)}.` : `You sent ${tx.amount} to ${tx.counterparty ?? tx.program ?? 'an external wallet'}, worth approximately ${compactMoney(tx.usd)}, with a network fee of ${tx.fee}.`;
-  return <Modal visible={Boolean(tx)} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={[styles.detailSheet, { paddingTop: insetTop + 12 }]}><View style={styles.detailTop}><Pressable onPress={onClose} style={styles.iconButton}><Icon name="chevron-down" size={20} color={colors.foreground} /></Pressable><Text style={styles.detailTitle}>Transaction</Text><Pressable onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }} style={styles.iconButton}><Icon name="copy" size={16} color={colors.foreground} /></Pressable></View><ScrollView showsVerticalScrollIndicator={false}><View style={styles.detailHero}><View style={styles.detailBadge}><Text style={styles.detailBadgeText}>{tx.type.toUpperCase()}</Text></View><Text style={styles.detailAmount}>{tx.direction === 'in' ? '+' : '−'}{tx.amount}</Text><Text style={styles.detailUsd}>Estimated value: {money(tx.usd)}</Text></View><View style={styles.detailRows}>{[['Network', 'Solana'], ...(tx.program ? [['Program', tx.program]] : []), ...(tx.counterparty ? [[tx.direction === 'in' ? 'From' : 'To', tx.counterparty]] : []), ['Network fee', tx.fee], ['Status', 'Confirmed'], ['Timestamp', tx.date], ['Signature', tx.signature]].map(([key, value]) => <View key={key} style={styles.detailRow}><Text style={styles.detailKey}>{key}</Text><Text style={[styles.detailVal, key === 'Status' && { color: colors.positive }]}>{value}</Text></View>)}</View><View style={styles.section}><PrimaryButton label={explaining ? 'Generating explanation…' : 'Explain this transaction'} onPress={() => { setExplaining(true); setTimeout(() => setExplaining(false), 900); }} secondary icon="star" />{!explaining && <View style={styles.explainBox}><Text style={styles.explainLabel}>AI INTERPRETATION</Text><Text style={styles.explainText}>{explanation}</Text></View>}</View><View style={{ height: 40 }} /></ScrollView></View></View></Modal>;
+  const explanation = explainTransactionLocally(tx.normalized);
+  return <Modal visible={Boolean(tx)} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={[styles.detailSheet, { paddingTop: insetTop + 12 }]}><View style={styles.detailTop}><Pressable onPress={onClose} style={styles.iconButton}><Icon name="chevron-down" size={20} color={colors.foreground} /></Pressable><Text style={styles.detailTitle}>Transaction</Text><Pressable onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }} style={styles.iconButton}><Icon name="copy" size={16} color={colors.foreground} /></Pressable></View><ScrollView showsVerticalScrollIndicator={false}><View style={styles.detailHero}><View style={styles.detailBadge}><Text style={styles.detailBadgeText}>{tx.type.toUpperCase()}</Text></View><Text style={styles.detailAmount}>{tx.direction === 'in' ? '+' : '−'}{tx.amount}</Text><Text style={styles.detailUsd}>Estimated value: {money(tx.usd)}</Text></View><View style={styles.detailRows}>{[['Network', 'Solana mainnet'], ...(tx.program ? [['Program', tx.program]] : []), ...(tx.counterparty ? [[tx.direction === 'in' ? 'From' : 'To', shortAddress(tx.counterparty)]] : []), ['Network fee', tx.fee], ['Status', tx.status === 'success' ? 'Confirmed' : 'Failed'], ['Timestamp', tx.date], ['Signature', tx.signature]].map(([key, value]) => <View key={key} style={styles.detailRow}><Text style={styles.detailKey}>{key}</Text><Text style={[styles.detailVal, key === 'Status' && { color: tx.status === 'success' ? colors.positive : colors.negative }]}>{value}</Text></View>)}</View><View style={styles.section}><PrimaryButton label={explaining ? 'Generating explanation…' : 'Explain this transaction'} onPress={() => { setExplaining(true); setTimeout(() => setExplaining(false), 900); }} secondary icon="star" />{!explaining && <View style={styles.explainBox}><Text style={styles.explainLabel}>ON-CHAIN INTERPRETATION</Text><Text style={styles.explainText}>{explanation}</Text></View>}<PrimaryButton label="Open in Solana Explorer" onPress={() => Linking.openURL(`https://explorer.solana.com/tx/${tx.signature}?cluster=mainnet-beta`)} secondary icon="external-link" /></View><View style={{ height: 40 }} /></ScrollView></View></View></Modal>;
 }
 
 const styles = StyleSheet.create({
@@ -300,17 +332,18 @@ const styles = StyleSheet.create({
   logoLine: { width: 34, height: 4, backgroundColor: '#FFFFFF', borderRadius: 3, transform: [{ skewX: '-32deg' }], position: 'absolute', top: 20 },
   logoLineMid: { top: 29, opacity: 0.8 },
   logoLineBottom: { top: 38, opacity: 0.95 },
-  landingTitle: { color: '#F3F4F8', fontFamily: 'Inter_700Bold', fontSize: 32, lineHeight: 38, letterSpacing: -0.8, textAlign: 'center', maxWidth: 340 },
-  landingSubtitle: { color: '#8B91A4', fontFamily: 'Inter_400Regular', fontSize: 15.5, lineHeight: 24, textAlign: 'center', marginTop: 14, maxWidth: 325 },
+  landingTitle: { color: '#F3F4F8', fontFamily: 'sans-serif', fontWeight: '700', fontSize: 32, lineHeight: 38, letterSpacing: -0.8, textAlign: 'center', maxWidth: 340 },
+  landingSubtitle: { color: '#8B91A4', fontFamily: 'sans-serif', fontSize: 15.5, lineHeight: 24, textAlign: 'center', marginTop: 14, maxWidth: 325 },
   chartPreview: { width: '100%', marginTop: 26 },
   landingActions: { paddingHorizontal: 24 },
   button: { minHeight: 54, borderRadius: 15, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginBottom: 10 },
   primaryButton: { backgroundColor: '#8B6CFF', shadowColor: '#8B6CFF', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 7 } },
   secondaryButton: { backgroundColor: '#191D28', borderWidth: 1, borderColor: '#232837' },
-  buttonText: { color: '#FFFFFF', fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  buttonText: { color: '#FFFFFF', fontFamily: 'sans-serif', fontWeight: '600', fontSize: 15 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.985 }] },
   securityNote: { flexDirection: 'row', gap: 8, paddingHorizontal: 5, marginTop: 8, alignItems: 'flex-start' },
-  securityText: { flex: 1, color: '#565C70', fontSize: 12.5, lineHeight: 18, fontFamily: 'Inter_400Regular' },
+  securityText: { flex: 1, color: '#565C70', fontSize: 12.5, lineHeight: 18, fontFamily: 'sans-serif' },
+  errorText: { color: '#FF7A8A', fontSize: 12.5, lineHeight: 18, textAlign: 'center', marginBottom: 10, fontFamily: 'Inter_500Medium' },
   walletChip: { flexDirection: 'row', gap: 7, alignItems: 'center', backgroundColor: '#191D28', borderWidth: 1, borderColor: '#232837', borderRadius: 20, paddingHorizontal: 9, paddingVertical: 7 },
   walletChipText: { color: '#8B91A4', fontSize: 12, fontFamily: 'Inter_500Medium' },
   walletDot: { width: 17, height: 17, borderRadius: 9, backgroundColor: '#8B6CFF', borderWidth: 2, borderColor: '#3ECF8E' },
@@ -355,6 +388,8 @@ const styles = StyleSheet.create({
   timeframe: { flex: 1, alignItems: 'center', backgroundColor: '#191D28', borderWidth: 1, borderColor: '#232837', borderRadius: 10, paddingVertical: 8 },
   chartCard: { backgroundColor: '#12151D', borderWidth: 1, borderColor: '#232837', borderRadius: 20, paddingHorizontal: 16, paddingTop: 18, paddingBottom: 8, marginBottom: 20 },
   chartValue: { color: '#F3F4F8', fontSize: 24, fontFamily: 'Inter_700Bold', marginBottom: 2 },
+  chartNote: { color: '#565C70', fontSize: 12.5, lineHeight: 18, fontFamily: 'Inter_400Regular', marginTop: 5 },
+  chartEmpty: { minHeight: 120, alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 10 },
   allocation: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingVertical: 8 },
   legend: { flex: 1, gap: 10 },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },

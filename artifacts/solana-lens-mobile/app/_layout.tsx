@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import '../global.css';
+import { Buffer } from 'buffer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -14,6 +15,11 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+
+const runtimeGlobal = globalThis as typeof globalThis & { Buffer?: typeof Buffer };
+if (!runtimeGlobal.Buffer) {
+  runtimeGlobal.Buffer = Buffer;
+}
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -41,8 +47,6 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
-
-  if (!fontsLoaded && !fontError) return null;
 
   return (
     <SafeAreaProvider>
